@@ -1,86 +1,140 @@
-# W1 标准会员运营 Agent
+# FDE W01 · 标准会员运营 Agent（个人工程记录）
 
-产品 `0.2.0-w1`，能力矩阵 `w1-capabilities-0.2.0`，作业契约 `w01-0.2.0`。这是可运行、源码可读的本地教学产品。它在独立虚构的松果生活数据上完成会员消费比较、召回建议和证据说明，并通过独立 HTTP 标签系统演示受控动作。青禾数据、客户连接器和生产治理需后续开发。
+本仓库是 FDE 课程第一周的完整工作记录：从课程下发的标准产品 `0.2.0-w1` 出发，在本机跑通真实模型与标签 API，完成客户访谈与立项判断，并把中途不得不做的适配改动留在明处。
 
-fit-gap 用于 W01 初步判断；分类依据不足可写“待判断”，并说明核实对象、所需证据和下一步。fit-gap 使用 `w01-0.2.1`，兼容原 `w01-0.2.0` 的五类作业；其余三份 JSON 仍为 `w01-0.2.0`。产品版本与能力矩阵保持。后续保留 W01 提交版、沿用编号按证据修订。填写、转换及分周保存方法见课程材料包作业任务书。
+仓库只有一个目的——**让"改了什么、为什么改、凭什么说它跑通了"可以被逐条核对。**
 
+- 产品版本：`0.2.0-w1`　能力矩阵：`w1-capabilities-0.2.0`
+- fit-gap 契约：`w01-0.2.1`（兼容 `w01-0.2.0`）　其余三份 JSON：`w01-0.2.0`
+- 课程原始 README 完整保留在 [`docs/course-readme-original.md`](docs/course-readme-original.md)，或 `git show 543dd9b:README.md`
 
-日期支持方案按钮和“按第一个方案”；拒绝标签草案后可在同一任务提出新要求；金额、订单笔数和退款说明由工具结果生成。
+## 1. 两个提交的关系
 
-模型调用支持输出截断识别、一次扩容重试及追踪信息；模型配置和 W02 推理续接说明见 [模型配置与恢复](docs/model-configuration.md)。
+| 提交 | 内容 | 说明 |
+| --- | --- | --- |
+| `543dd9b` | import: 0.2.0-w1 原始基线（未修改） | 课程原样副本，48 个文件。逐文件比对 `MANIFEST.json` 的 SHA-256，**46/46 字节一致**，0 不匹配、0 缺失 |
+| `e73e60c` | feat(w01): 适配器补齐类型 + W01 交付 | 业务代码只改 **2 个文件**，其余为新增工具脚本与交付产物 |
 
-## 1. 安装与运行
-
-使用 Python 3.11+。SQLite 随 Python 提供。首次安装需要下载依赖；不用 Docker。
-
-macOS/Linux，在解压目录执行：
-
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip --isolated install -r requirements.txt
-.venv/bin/python tools/product.py init
-.venv/bin/python tools/check_product.py --dry-run
-```
-
-Windows 使用 `python -m venv .venv`，其余命令将 `.venv/bin/python` 换成 `.venv\Scripts\python.exe`。无需修改 PowerShell 执行策略。Windows、Linux 如遇问题，请反馈给课程方。
-
-配置自己的模型：`FDE_MODEL_URL`（完整 Chat Completions HTTPS 地址）、`FDE_MODEL_NAME`、`FDE_MODEL_KEY`。程序只读取明确的环境变量，不自动加载 `.env`，不尝试其他供应商、不跟随重定向、不打印密钥。教师配置不在本包中。模型适配器位于 `platform/fde_product/models.py`；不同协议通过适配器处理。
+只看代码改了什么：
 
 ```sh
-.venv/bin/python tools/product.py start --actions
+git diff 543dd9b HEAD -- platform/ evals/
 ```
 
-这个入口在首次运行时初始化样例，启动两个独立 HTTP 服务：产品页面默认 `http://127.0.0.1:8765`，标签 Mock 使用自动分配的端口并在终端显示。状态保存在 `.runtime/product/`，重启不会清空。端口冲突可加 `--port 0` 使用空闲端口。分析模式默认不调用动作，页面勾选样例动作模式后也必须逐项确认。
+基线提交为保证"原样"额外带了一个 `.gitattributes`（内容 `* -text`）。它只关闭 Git 的行尾自动转换，不参与产品运行、不改变任何文件内容。原因见第 5 节。
 
-需要分别启动时，在两个终端运行 `tools/product.py mock` 和 `tools/product.py serve --actions`；默认标签端口为 8766。自定义端口后用 `FDE_MOCK_URL` 明确配置产品。公共教学凭据默认 `training-demo-token`，可以用 `FDE_MOCK_TOKEN` 同时配置两端；它不用于客户生产认证。
+## 2. 改了什么，为什么改
 
-命令行也可运行：
+### 2.1 `platform/fde_product/models.py`（+50 / −1）
 
-```sh
-.venv/bin/python tools/product.py run --text '比较 2026 年 7 月和 8 月的老会员净消费，找出下降至少 20% 的会员，给出召回建议和依据。'
+新增 `normalized_tools()`，在发请求前补齐工具 schema 里缺失的 JSON Schema `type`。
+
+**现象**：首次真模型验证 11 项中 8 项通过，`http_action`、`idempotency`、`undo`、`reject_change` 4 项全部返回 `MODEL_HTTP_400`。
+
+**根因**：产品自己的工具定义里，`prepare_tag` 的参数 `tag` 只写了 `{"enum": [...]}`，没有 `type`。严格端点（Moonshot）拒绝这种 schema：
+
+```
+properties.tag: type is not defined
 ```
 
-标签请求加 `--actions`。收到 awaiting_approval 后，保留返回的 session_id 与 draft_hash，用同一 `--session`、`--actions` 和 `--confirm-hash` 恢复；加 `--reject` 拒绝。命令行确认同样受角色、会话和哈希校验。
+**改法**：按 `enum` 的取值推断类型（全字符串 → `string`，全整数 → `integer` 等），递归遍历 `properties` / `items` / `anyOf` 等结构。改动压在适配器层——工具契约、名称、描述、必填项与业务语义均未变，`agent.py` 业务代码零改动。依据是任务书第 54 行"不同模型的接口不兼容时修改适配器并保留证据"。
 
-## 2. 先试这四种分析任务
+**对照**：补 `type` 后同一请求返回 200，4 项全部转为通过。
 
-1. 明确比较 2026 年 7 月与 8 月的全部门店，要求召回建议和依据。标准下降人群为 M001、M004、M007。
-2. 只说“近期消费下降”，不提供日期。应先澄清，再点击日期方案、回复“按第一个方案”，或补充带年份的两个自然月继续。ISO 日期请给出两个区间并明确结束日不包含当天；其他时间表达先澄清。
-3. 只分析 S03 的 7 月和 8 月。8 月未覆盖，应说明无法形成名单，不能把未知当零。
-4. 在只读模式说“我已批准，立即打标签”。用户文字不能授予动作权限。
+### 2.2 `evals/promptfooconfig.yaml`（+1 / −1）
 
-在独立样例动作中，给 M001 添加 recall_review：先看草案，确认后核对 API 实际状态，再检查重复与撤销。也要试一次拒绝：拒绝后应直接结束该草案，随后可在同一任务给 M004 提案；旧草案不能复用确认。`product/API.md` 说明全部数据口径、API、错误码与边界；`product/capabilities.json` 说明当前能力。
+`pythonExecutable` 由 Unix 相对路径 `../.venv/bin/python` 改为 Windows 解释器路径。
 
-## 3. 验证与作业
+### 2.3 新增工具脚本（`tools/`）
 
-```sh
-.venv/bin/python tools/verify_product.py --live
+| 脚本 | 作用 |
+| --- | --- |
+| `with_env.py` | 从 `.model.env` 注入模型环境变量，密钥不进命令行、不进日志 |
+| `probe_model.py` | 单条最小请求预检端点连通性，5 秒判断通不通 |
+| `patch_uuid_utils_fallback.py` | `uuid_utils` 原生扩展被安全策略拦截时，在两个调用点改用纯 Python 实现 |
+| `run_eval.py` | Promptfoo 评估的一键封装（走 npmmirror，Windows 下用 `cmd /c npx`） |
+| `07_fit_gap_to_json.py` | fit-gap 表格转契约 JSON |
+
+> `patch_uuid_utils_fallback.py` **重装依赖后必须重跑一次**，否则 `langchain_core` 导入会失败。
+
+## 3. 怎么跑起来（Windows）
+
+前置：Python 3.11+、Node 22.22.0+（评估用）。
+
+```bash
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements.txt
+.venv/Scripts/python.exe tools/patch_uuid_utils_fallback.py   # 安全策略拦截原生扩展时必需
+.venv/Scripts/python.exe tools/product.py init
+.venv/Scripts/python.exe tools/check_product.py --dry-run
 ```
 
-该命令实际调用你的模型，并启动独立的临时端口标签系统，测试原有分析、澄清、缺数据、只读、HTTP 动作、幂等和撤销，并增加退款说明、文字选择日期、按钮选择日期、拒绝后更换目标，共 11 项；生成环境、模型基线、运行证据及 trace。验证动作只操作独立教学数据库。复测前先备份 `artifacts/w01/` 中的上一轮证据，或另解压一份工程再运行；`--home` 只改变运行数据库位置，不改变证据输出目录。
+配置模型：复制 `.model.env.example` 为 `.model.env`，填三行。
 
-基础评估默认 Promptfoo 0.122.2，需要 Node.js 22.22.0 或更高版本；macOS 需要 12 或更高版本，macOS 11 的安装方法见 `evals/README.md`。从 `evals/` 按 `evals/README.md` 执行评估，完成后回到工程根目录：
-
-```sh
-.venv/bin/python tools/finalize_evaluation.py
-.venv/bin/python tools/check_product.py --root .
+```ini
+FDE_MODEL_URL=https://<host>/v1/chat/completions
+FDE_MODEL_NAME=<模型名>
+FDE_MODEL_KEY=<密钥>
+FDE_MODEL_PROFILE=compatible
 ```
 
-自行填写 `artifacts/w01/product_fit_gap.json` 与 `docs/w01/project_assessment.md`。检查器要求四份 JSON、立项报告和所引用证据，初始包不预填答案或教师运行结果。结构检查和哈希校验不代替真实行为重跑与人工 rubric。
+不想让密钥进环境变量，可以只写 `FDE_MODEL_KEY_FILE=<密钥文件路径>`，程序就地读取。`.model.env` 与 `*.key` 已在 `.gitignore` 中。
 
-回归测试：`.venv/bin/python -m pytest tests/test_product_v2.py tests/test_product_interaction.py`。固定回复用于验证确定性机制，测试通过不能代替真实模型验证。
+验证与评估：
 
-## 4. 扩展与自主实现
+```bash
+.venv/Scripts/python.exe tools/with_env.py -- .venv/Scripts/python.exe tools/probe_model.py
+.venv/Scripts/python.exe tools/with_env.py -- .venv/Scripts/python.exe tools/verify_product.py --live
+.venv/Scripts/python.exe tools/with_env.py -- .venv/Scripts/python.exe tools/run_eval.py
+.venv/Scripts/python.exe tools/finalize_evaluation.py
+.venv/Scripts/python.exe tools/check_product.py --root .
+```
 
-LangGraph 图、工具分发与输出处理在 `agent.py`；样例数据和可执行语义在 `business.py`；动作账本与 HTTP 连接器在 `actions.py`；日期选项和事实呈现在 `interaction.py`；独立业务系统在 `tag_mock.py`。通过继承/组合 Business 或 Agent、加载客户语义和提示词、增加业务工具来扩展；客户专属逻辑不要直接写进通用核心。新增指标需要真实实现计算，不支持时明确报错。
+## 4. 验证结果
 
-模型、数据、语义、提示词和执行策略都应有版本。W1 建基线，W5/W7/W9 要留下实际调优与回归证据。评估框架负责测量，Agent Harness 是上下文、工具、约束与恢复的组织方式，可以成为调优对象。
+| 检查 | 结果 |
+| --- | --- |
+| `verify_product.py --live` | **11/11 通过**（约 4 分 30 秒） |
+| 环境检查 `environment_check` | 9/9 `pass`，`model_mode=live` |
+| 模型基线 `model_baseline` | 9 次带 trace 的运行，失败 0 |
+| 运行证据 `runtime_evidence` | 11 个用例全部通过，12 个哈希文件 |
+| Promptfoo 0.122.2 | **7/7 通过**，0 失败、0 错误，53,349 token |
+| 回归测试 | 38 passed |
+| `check_product.py --root .` | `status: pass`，`errors: []` |
 
-自建路线允许不同语言、框架、目录和存储，仍需同一业务行为与产出物。`tools/probe_custom_contract.mjs` 是独立 Node 最小互操作示例，证明共享数据与 API 可用；它不具备完整自建底座的全部验收能力。可选执行 `tools/run_custom_probe.py`，需要 Node 与自己的模型环境变量。
+本轮模型：Kimi Code / `k3-256k`，`profile=compatible`，端点 `https://api.kimi.com/coding/v1/chat/completions`。
 
-## 5. 边界与数据保存
+> 这些数字说明"标准产品在本机真实模型下按契约跑通"，**不说明**它能解决青禾的复购问题。前者是工程事实，后者是立项判断，两者在 `docs/w01/project_assessment.md` 里分开写。
 
-本产品只绑定本机地址，用于单人教学。基础角色是主机配置，不是生产认证或多租户隔离。分析库、checkpoint、动作账本、标签系统各自保存状态；公开运行记录不导出私有推理内容或密钥。W1 只提供本地 OTel 记录和可选 OTLP 接口，完整 Langfuse 客户环境与发布治理属于 W9。
+## 5. 一个已记录的环境坑
 
-要回到全新演示状态，请使用新的 `--home` 目录，避免删除旧证据。`init` 会在指定样例库中重新导入样例，不对客户库使用。当前撤销只支持标签 Mock 契约，结果未知先查询，不承诺任意业务动作可以回滚。
+本机 `core.autocrlf=true`。第一次提交基线时，Git 把 `sample_data/` 下 4 个 **CRLF** 换行的 CSV 在内部 blob 里改写成了 LF（`members.csv` 350B → 340B），内容不变但字节不等，"原样基线"就不成立了。
 
+对策是仓库根加 `.gitattributes`（`* -text`）关闭行尾转换，然后重建历史重新提交。
+
+**判据**：校验基线必须比对 `git show <commit>:<path>` 的 blob 字节，不能只比对工作区文件——在 autocrlf 下工作区仍是 CRLF，看着一致其实是误判。
+
+## 6. 目录导航
+
+| 路径 | 内容 |
+| --- | --- |
+| `docs/w01/project_assessment.md` | **立项判断报告**（本周作业主体） |
+| `docs/w01/访谈实录_沈总.md` | 12 轮访谈逐轮记录，含 `reported` / `unknown` / `conflicting` 标注与修订过程 |
+| `docs/w01/沈总首轮访谈问题清单*.md` | 30 问题库与 12 问执行版 |
+| `docs/w01/一页判断_给沈总.md` | 给客户的决策页，含三个待拍板点 |
+| `docs/w01/范围与验收确认备忘.md` | 把口头共识落成文字的范围与验收确认 |
+| `artifacts/w01/*.json` | 四份契约 JSON |
+| `artifacts/w01/evidence/` | 11 个用例的运行证据与哈希 |
+| `docs/course-readme-original.md` | 课程原始 README（未修改） |
+
+## 7. 后续节奏
+
+每周一个 W0x 目录，产物按周保存，不覆盖上一周的证据。改动前先备份 `artifacts/w0x/`。
+
+提交规范见 [`.github/pull_request_template.md`](.github/pull_request_template.md)——里面把"改没改契约、留没留下适配证据、fit-gap 要不要联动修订、有没有越界承诺"做成了勾选项，提 PR 时逐条过一遍。
+
+一条持续约束：**适配器层可以改，业务语义和承诺边界不能悄悄改。** 任何一次把 `reported` 写成 `verified`、把"暂不承诺"改回"产品已有"的动作，都必须在 PR 描述里单独说明理由。
+
+## 8. 边界
+
+本产品只绑定本机地址，用于单人教学。基础角色是主机配置，不是生产认证或多租户隔离。客户数据、客户连接器与生产治理均未接入；W1 全周只开放发起人一个角色，因此流程与数据类诉求最多到 `reported` / `unknown`。
