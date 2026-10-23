@@ -59,7 +59,7 @@ properties.tag: type is not defined
 
 ## 3. 怎么跑起来（Windows）
 
-前置：Python 3.11+、Node 22.22.0+（评估用）。
+前置：Python 3.11+、Node 22.22.0+（评估用）。Node 默认从 `PATH` 查找，也可以用 `FDE_NODE_DIR` 指向 node 所在目录；`tools/run_eval.py --check` 可先自检。
 
 ```bash
 python -m venv .venv
@@ -85,6 +85,7 @@ FDE_MODEL_PROFILE=compatible
 ```bash
 .venv/Scripts/python.exe tools/with_env.py -- .venv/Scripts/python.exe tools/probe_model.py
 .venv/Scripts/python.exe tools/with_env.py -- .venv/Scripts/python.exe tools/verify_product.py --live
+.venv/Scripts/python.exe tools/run_eval.py --check            # 先确认 Node 环境，不跑评估
 .venv/Scripts/python.exe tools/with_env.py -- .venv/Scripts/python.exe tools/run_eval.py
 .venv/Scripts/python.exe tools/finalize_evaluation.py
 .venv/Scripts/python.exe tools/check_product.py --root .
