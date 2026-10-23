@@ -4,7 +4,7 @@ prompts:
 providers:
   - id: file://provider.py
     config:
-      pythonExecutable: ../.venv/bin/python
+      pythonExecutable: ../.venv/Scripts/python.exe   # Windows 虚拟环境路径（原值 ../.venv/bin/python）
 tests:
   - description: Explicit periods and evidence
     vars:

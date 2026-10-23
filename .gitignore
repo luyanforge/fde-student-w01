@@ -1,0 +1,13 @@
+# ---- 本地运行环境（不入库）----
+.venv/
+.runtime/
+.tmp/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp/
+
+# ---- 模型凭据（绝不入库）----
+.model.env
+*.key
+*.pem

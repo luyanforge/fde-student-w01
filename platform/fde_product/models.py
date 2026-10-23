@@ -28,6 +28,55 @@ def thinking_parameters(profile, state, wire_format=WIRE_FORMAT):
     return params
 
 
+def normalized_tools(tools):
+    """补齐工具 schema 中缺失的属性类型，交出去的请求才被严格端点接受。
+
+    某些端点要求 JSON Schema 每个属性都显式声明 type，仅写 enum 会被拒绝
+    （Moonshot 返回 400 `properties.<name>: type is not defined`）。
+    这里只按 enum 取值推断类型，不改变工具契约、名称、必填项与业务语义。
+    """
+    if not tools:
+        return tools
+    result = deepcopy(tools)
+
+    def infer(values):
+        if all(isinstance(v, bool) for v in values):
+            return "boolean"
+        if all(isinstance(v, str) for v in values):
+            return "string"
+        if all(isinstance(v, int) and not isinstance(v, bool) for v in values):
+            return "integer"
+        if all(isinstance(v, (int, float)) for v in values):
+            return "number"
+        return None
+
+    def walk(schema):
+        if not isinstance(schema, dict):
+            return
+        props = schema.get("properties")
+        if isinstance(props, dict):
+            for sub in props.values():
+                if isinstance(sub, dict):
+                    if "type" not in sub and isinstance(sub.get("enum"), list) and sub["enum"]:
+                        guessed = infer(sub["enum"])
+                        if guessed:
+                            sub["type"] = guessed
+                    walk(sub)
+        for key in ("items", "additionalProperties", "not"):
+            if isinstance(schema.get(key), dict):
+                walk(schema[key])
+        for key in ("anyOf", "oneOf", "allOf", "prefixItems"):
+            if isinstance(schema.get(key), list):
+                for sub in schema[key]:
+                    walk(sub)
+
+    for tool in result:
+        function = tool.get("function") if isinstance(tool, dict) else None
+        if isinstance(function, dict):
+            walk(function.get("parameters") or {})
+    return result
+
+
 class ModelError(Exception):
     def __init__(self, code):
         self.code = code
@@ -99,7 +148,7 @@ class CompatibleModel:
 
     def _payload(self,messages,tools):
         payload={"model":self.model,"messages":messages,"stream":False,self.token_limit_field:self.max_tokens}
-        if tools:payload.update(tools=tools,tool_choice="auto")
+        if tools:payload.update(tools=normalized_tools(tools),tool_choice="auto")
         if self.request_profile in ("json-object","deepseek-json","gateway-json") and not tools:
             payload["response_format"]={"type":"json_object"}
         payload.update(thinking_parameters(self.request_profile, "enabled", self.wire_format))
